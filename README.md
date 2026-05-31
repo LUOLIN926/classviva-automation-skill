@@ -1,6 +1,6 @@
 # OpenClaw Classviva Question Helper Skill
 
-An OpenClaw skill for opening Classviva, guiding manual login, asking which quiz/questions to work on, extracting Classviva/Moodle quiz questions, LaTeX, options, and answer controls into a structured payload, and filling verified answers.
+An OpenClaw skill for opening Classviva, guiding manual login, asking which quiz/questions to work on, then spawning one OpenClaw sub-agent to extract Classviva/Moodle quiz questions, LaTeX, options, and answer controls into a structured payload and fill verified answers.
 
 This project is a learning helper. Auto-submit and retry behavior are opt-in, require confirmation for the current quiz, and must not be used to bypass course rules.
 
@@ -9,6 +9,7 @@ This project is a learning helper. Auto-submit and retry behavior are opt-in, re
 - Extract question text directly from the DOM, avoiding snapshot truncation.
 - Preserve LaTeX from MathJax script tags as `\(...\)` and `\[...\]`.
 - Return both Markdown (`agentPrompt`) and structured JSON controls.
+- Keep the main session free by delegating quiz work to exactly one `sessions_spawn` sub-agent.
 - Ask the user which quiz/questions to handle and whether permitted auto-submit or retry behavior is desired.
 - Fill user-confirmed answers for text, textarea, select, radio, and checkbox controls.
 - Verify live Moodle field values after filling.
@@ -51,6 +52,18 @@ openclaw browser snapshot
 
 After login, ask which quiz/questions to handle, whether to auto-submit after verification, and whether to retry if multiple attempts are allowed. Auto-submit and retry are off by default and should only proceed with explicit user confirmation for the current quiz.
 
+The main session should then spawn exactly one worker and leave the quiz work to that sub-agent:
+
+```text
+sessions_spawn
+  mode: run
+  label: classviva-quiz-worker
+  runTimeoutSeconds: 7200
+  task: |
+    Use the Classviva skill workflow for the selected quiz.
+    Keep all quiz extraction, filling, verification, optional submit, and optional retry work in this sub-agent.
+```
+
 On the quiz attempt page, inject the extractor:
 
 ```bash
@@ -79,6 +92,7 @@ openclaw browser evaluate --fn '() => window.ClassvivaExtractor.verify()'
 ## Safety Boundary
 
 - Do not ask for credentials; login is manual.
+- Use one OpenClaw sub-agent for quiz work so the main session is not occupied.
 - Do not bypass course rules, attempt limits, lockouts, or warnings.
 - Do not submit or retry unless the user explicitly opted in for the current quiz and confirmed the final submit step.
 - Follow each question's stated answer requirements first; otherwise strictly follow `references/answer-format.md`.

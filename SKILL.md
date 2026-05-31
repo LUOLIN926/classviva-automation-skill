@@ -1,6 +1,6 @@
 ---
 name: classviva-automation-skill
-description: "Classviva/Moodle quiz learning helper for OpenClaw. Use when opening Classviva, guiding manual login, asking which quiz/questions to work on, extracting question text, LaTeX, answer controls, options, and current values, preparing Markdown plus JSON for answer work, filling confirmed answers, verifying Moodle recorded values, and asking whether permitted auto-submit or retry behavior is desired. Do not bypass course rules or auto-submit graded coursework without explicit user confirmation."
+description: "Classviva/Moodle quiz learning helper for OpenClaw. Use when opening Classviva, guiding manual login, asking which quiz/questions to work on, then spawning exactly one sub-agent to extract question text, LaTeX, answer controls, options, and current values, prepare Markdown plus JSON for answer work, fill confirmed answers, verify Moodle recorded values, and handle confirmed auto-submit or retry behavior. Do not bypass course rules or auto-submit graded coursework without explicit user confirmation."
 user-invocable: true
 argument-hint: "[start|extract|fill|verify]"
 ---
@@ -10,6 +10,8 @@ argument-hint: "[start|extract|fill|verify]"
 Use this OpenClaw skill to extract Classviva quiz questions with LaTeX intact, hand the extracted Markdown/JSON to an agent for explanation or answer checking, fill answers that the user has already confirmed, and verify that Moodle recorded the values.
 
 Do not bypass course rules. Auto-submit and retry-until-full-score are off by default and require explicit user confirmation for the current quiz. If the quiz is graded and the user has not confirmed that automation is allowed, stop at extraction, explanation, filling confirmed answers, and verification.
+
+Use exactly one OpenClaw sub-agent for quiz work so the main session is not occupied. The main agent only opens Classviva for login, collects user choices, spawns the worker, and reports the worker's result.
 
 ## Files
 
@@ -38,7 +40,50 @@ Before opening a quiz attempt, ask the user these questions in plain language:
 3. Should I auto-submit after filling verified answers? Default: no. If yes, require explicit confirmation again immediately before final submission.
 4. Should I retry/re-attempt until full score if the platform allows multiple attempts? Default: no. If yes, confirm that retries are allowed by the course rules and stop after any attempt limit, lockout, or non-full score that needs user judgment.
 
-Then open the quiz:
+Then spawn exactly one sub-agent to perform the quiz work. Do not continue the quiz workflow in main.
+
+## Sub-agent Delegation
+
+After login and user choices are collected, use one `sessions_spawn` worker:
+
+```text
+sessions_spawn
+  mode: run
+  label: classviva-quiz-worker
+  runTimeoutSeconds: 7200
+  task: |
+    You are the Classviva quiz worker sub-agent. The main session must stay free; do all Classviva quiz work in this sub-agent.
+
+    Context:
+    - The user has manually logged in to Classviva in the OpenClaw browser.
+    - Quiz target: <quiz URL/id/title from user>
+    - Question scope: <all visible questions or selected question numbers>
+    - Auto-submit: <yes/no>. Default no.
+    - Retry until full score: <yes/no>. Default no.
+
+    Required workflow:
+    1. Open the quiz or continue from the current Classviva tab.
+    2. Confirm this is the intended quiz before starting/continuing an attempt.
+    3. Load `scripts/classviva-extractor.js` from the OpenClaw workspace skill path.
+    4. Extract questions with `window.ClassvivaExtractor.extract()`.
+    5. Read `references/answer-format.md` before formatting math answers.
+    6. Follow each question's own answer-format instructions first; otherwise strictly follow `answer-format.md`.
+    7. Fill only answers that are confirmed in the worker context or confirmed by the user during the run.
+    8. Verify with `window.ClassvivaExtractor.verify()` after filling.
+    9. If auto-submit is enabled, summarize answers and request final confirmation immediately before clicking submit.
+    10. If retry-until-full-score is enabled, retry only within course rules and stop on attempt limits, lockouts, ambiguous feedback, or any warning.
+    11. Report final status, filled questions, verification result, submit/retry outcome, and any blockers back to the main session.
+
+    Safety:
+    - Do not ask for credentials.
+    - Do not bypass course rules.
+    - Do not hide progress in a background loop.
+    - Do not submit unless the user explicitly opted in for this quiz and confirmed the final submit step.
+```
+
+The main agent should tell the user that a sub-agent has been started and then wait for/report the worker result.
+
+When the sub-agent opens the quiz, use:
 
 ```bash
 openclaw browser open "https://classviva.hkust-gz.edu.cn/mod/quiz/view.php?id=<quiz_id>"
