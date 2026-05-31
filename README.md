@@ -19,15 +19,13 @@ This project is a learning helper. It is not an auto-solver and it does not subm
 ├── SKILL.md
 ├── scripts/
 │   └── classviva-extractor.js
-├── references/
-│   └── answer-format.md
-└── ClassvivaQuestionHelper/
-    └── upstream Tampermonkey reference submodule
+└── references/
+    └── answer-format.md
 ```
 
 ## Install For OpenClaw
 
-Copy or clone this repository into the OpenClaw workspace skills directory. The upstream submodule is optional for runtime use.
+Copy or clone this repository into the OpenClaw workspace skills directory.
 
 ```bash
 mkdir -p "$HOME/.openclaw/workspace/skills"
@@ -76,4 +74,4 @@ openclaw browser evaluate --fn '() => window.ClassvivaExtractor.verify()'
 
 ## Credits
 
-The extractor logic is adapted from the MIT-licensed Classviva Question Helper Tampermonkey project linked as the `ClassvivaQuestionHelper/` submodule.
+The extractor logic is adapted from the MIT-licensed Classviva Question Helper Tampermonkey project by Code IntelliX.

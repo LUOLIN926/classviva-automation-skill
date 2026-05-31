@@ -15,7 +15,6 @@ Do not auto-solve graded coursework, do not invent final answers on behalf of th
 
 - `scripts/classviva-extractor.js`: browser-injected extractor/fill/verify API.
 - `references/answer-format.md`: Classviva math answer syntax rules. Read it before validating or filling math expressions.
-- `ClassvivaQuestionHelper/`: upstream Tampermonkey reference only; do not use it as the OpenClaw runtime entrypoint.
 
 ## Open The Quiz
 
