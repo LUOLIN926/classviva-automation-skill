@@ -2,6 +2,8 @@
 
 Use these rules when checking or filling user-confirmed math answers in Classviva.
 
+If a question states a special answer requirement, follow the question's requirement first. Use this file as the default rule set only when the question does not override it.
+
 ## Basic Input Rules
 
 - Use ASCII / English input symbols only.
@@ -84,6 +86,7 @@ Type Greek letters by name:
 ## Filling Checklist
 
 - Confirm the answer came from the user or is being used only for learning/checking.
+- Check whether the question states a special format such as exact value, decimal precision, interval notation, no spaces, simplified form, units, or variable names. That requirement overrides this general guide.
 - Convert LaTeX-only notation into Classviva's plain input syntax before filling.
 - Re-run `window.ClassvivaExtractor.verify()` after filling.
-- Do not submit from this skill.
+- Do not submit unless the user explicitly opted into submission for the current quiz and confirmed the final submit step.
