@@ -1,0 +1,11 @@
+.DS_Store
+**/.DS_Store
+
+# Upstream reference checkout metadata is recorded as a Git submodule.
+ClassvivaQuestionHelper/.git/
+
+node_modules/
+.env
+.env.*
+tmp/
+*.log
