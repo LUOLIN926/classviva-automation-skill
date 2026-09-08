@@ -1,0 +1,7 @@
+interface:
+  display_name: "Classviva Question Helper"
+  short_description: "Extract, fill, and verify Classviva and Moodle quizzes"
+  default_prompt: "Use $classviva-automation-skill to extract and assist with my Classviva quiz."
+
+policy:
+  allow_implicit_invocation: true

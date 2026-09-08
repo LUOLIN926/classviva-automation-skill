@@ -1,50 +1,166 @@
 ---
 name: classviva-automation-skill
-description: "Classviva/Moodle quiz learning helper for OpenClaw. Use when opening Classviva, guiding manual login, asking which quiz/questions to work on, then spawning exactly one sub-agent to extract question text, LaTeX, answer controls, options, and current values, prepare Markdown plus JSON for answer work, fill confirmed answers, verify Moodle recorded values, and handle confirmed auto-submit or retry behavior. Do not bypass course rules or auto-submit graded coursework without explicit user confirmation."
-user-invocable: true
-argument-hint: "[start|extract|fill|verify]"
+description: "Classviva and Moodle quiz helper to extract questions with LaTeX intact, prepare Markdown and JSON controls, fill user-confirmed answers, and verify recorded values in OpenClaw or Codex."
+metadata:
+  user-invocable: true
+  argument-hint: "[start|extract|fill|verify]"
 ---
 
 # Classviva Question Helper
 
-Use this OpenClaw skill to extract Classviva quiz questions with LaTeX intact, hand the extracted Markdown/JSON to an agent for explanation or answer checking, fill answers that the user has already confirmed, and verify that Moodle recorded the values.
+Extract Classviva/Moodle quiz questions with LaTeX formulas intact, hand the extracted Markdown and JSON payload to an agent for analysis or syntax checking, fill user-confirmed answers, and verify live Moodle recorded values.
 
-Do not bypass course rules. Auto-submit and retry-until-full-score are off by default and require explicit user confirmation for the current quiz. If the quiz is graded and the user has not confirmed that automation is allowed, stop at extraction, explanation, filling confirmed answers, and verification.
+Supported agent environments:
+- **OpenClaw**: uses `openclaw browser` and `sessions_spawn` sub-agent delegation.
+- **Codex**: uses Playwright CLI (`playwright-cli` or `npx @playwright/cli`) or Playwright runtime.
 
-Use exactly one OpenClaw sub-agent for quiz work so the main session is not occupied. The main agent only opens Classviva for login, collects user choices, spawns the worker, and reports the worker's result.
+## Core Rules & Safety Boundary
 
-## Files
+- **Manual login**: Always let the user log in manually. Never ask for, store, or enter credentials.
+- **Course rules**: Do not bypass platform constraints or course policies.
+- **No unconfirmed submissions**: Auto-submit and retry-until-full-score are OFF by default. They require explicit opt-in for the current quiz and immediate re-confirmation before final submission.
+- **Math syntax**: Follow each question's stated answer format first; otherwise strictly adhere to `references/answer-format.md`.
 
-- `scripts/classviva-extractor.js`: browser-injected extractor/fill/verify API.
-- `references/answer-format.md`: Classviva math answer syntax rules. Read it before validating or filling math expressions.
+## Files & References
 
-## Start Workflow
+- `scripts/classviva-extractor.js`: Browser-injected script providing `window.ClassvivaExtractor` (`extract()`, `fill()`, `verify()`). Framework-agnostic.
+- `references/answer-format.md`: Syntax guide for math expressions (powers, fractions, roots, Greek letters, interval notation, trig functions).
+- `agents/openai.yaml`: Codex skill UI interface and invocation policy.
 
-Always start by opening Classviva and letting the user log in manually:
+## Skill Path Discovery
+
+Locate `scripts/classviva-extractor.js` based on your active runtime:
+
+- **Codex**:
+  ```bash
+  EXTRACTOR_PATH="${CODEX_HOME:-$HOME/.codex}/skills/classviva-automation-skill/scripts/classviva-extractor.js"
+  ```
+- **OpenClaw**:
+  ```bash
+  EXTRACTOR_PATH="$HOME/.openclaw/workspace/skills/classviva-automation-skill/scripts/classviva-extractor.js"
+  ```
+- **Source repository checkout**:
+  ```bash
+  EXTRACTOR_PATH="$(pwd)/scripts/classviva-extractor.js"
+  ```
+
+---
+
+## Interactive Initialization
+
+Before opening a quiz attempt, collect user intent in plain language:
+
+1. **Target quiz**: Ask for the quiz URL, quiz ID, title, or navigation path.
+2. **Question scope**: Default to all visible questions in the current attempt.
+3. **Auto-submit**: Default NO. If enabled, require explicit confirmation again right before submitting.
+4. **Retry until full score**: Default NO. If enabled, verify the quiz permits multiple attempts, and stop on lockout, attempt limits, or unexpected feedback.
+
+---
+
+## Workflow: Codex Mode
+
+In Codex, use Playwright CLI (`playwright-cli` or `npx --yes --package @playwright/cli playwright-cli`).
+
+### 1. Open Classviva & Guide Login
+
+```bash
+npx --yes --package @playwright/cli playwright-cli open "https://classviva.hkust-gz.edu.cn/" --headed
+```
+
+Wait for the user to complete login manually. Snapshot to confirm the session:
+
+```bash
+npx --yes --package @playwright/cli playwright-cli snapshot
+```
+
+### 2. Navigate to Quiz
+
+```bash
+npx --yes --package @playwright/cli playwright-cli goto "https://classviva.hkust-gz.edu.cn/mod/quiz/view.php?id=<quiz_id>"
+npx --yes --package @playwright/cli playwright-cli snapshot
+```
+
+Confirm this is the intended quiz. If starting a new attempt or continuing, click the attempt button using its snapshot ref:
+
+```bash
+npx --yes --package @playwright/cli playwright-cli click <attempt_button_ref>
+```
+
+### 3. Inject Extractor
+
+Inject `scripts/classviva-extractor.js` into the page:
+
+```bash
+npx --yes --package @playwright/cli playwright-cli run-code "await page.addScriptTag({ path: '$EXTRACTOR_PATH' })"
+```
+
+Verify the extractor is ready:
+
+```bash
+npx --yes --package @playwright/cli playwright-cli eval "() => window.ClassvivaExtractor && window.ClassvivaExtractor.version"
+```
+
+### 4. Extract Questions
+
+```bash
+npx --yes --package @playwright/cli playwright-cli eval "() => window.ClassvivaExtractor.extract()"
+```
+
+The output contains:
+- `agentPrompt`: Markdown representation preserving MathJax LaTeX (`\(...\)` and `\[...\]`).
+- `questions`: Structured list of questions and their input `controls` (with keys like `question-1-1:answer:0`).
+
+### 5. Check & Confirm Answers
+
+1. Review `agentPrompt` and reason through answers.
+2. Read `references/answer-format.md` to format math expressions.
+3. Present proposed answers to the user for confirmation before filling.
+
+### 6. Fill Answers
+
+Construct the answer map and fill without submitting:
+
+```bash
+npx --yes --package @playwright/cli playwright-cli eval 'answers => window.ClassvivaExtractor.fill(answers)' '{"question-1-1:answer:0":"sqrt(2)"}'
+```
+
+### 7. Verify Values
+
+```bash
+npx --yes --package @playwright/cli playwright-cli eval "() => window.ClassvivaExtractor.verify()"
+```
+
+Compare reported live values against confirmed answers.
+
+### 8. Optional Submit or Retry
+
+Only proceed if user explicitly opted in:
+1. Re-verify values and show a final summary of answers to be submitted.
+2. Request final user confirmation immediately before clicking submit.
+3. Snapshot, locate Moodle submit/finish button, click it, and handle Moodle's second confirmation modal.
+4. Take a screenshot:
+   ```bash
+   npx --yes --package @playwright/cli playwright-cli screenshot
+   ```
+
+---
+
+## Workflow: OpenClaw Mode
+
+In OpenClaw, use `openclaw browser` and delegate quiz execution to a sub-agent to keep the main session free.
+
+### 1. Open Classviva & Manual Login
 
 ```bash
 openclaw browser open "https://classviva.hkust-gz.edu.cn/"
 openclaw browser snapshot
 ```
 
-If the page is not logged in, tell the user to finish login in the browser. Do not ask for or type the user's password. After the user says login is complete, run:
+Prompt the user to complete login in the browser. Confirm with `openclaw browser snapshot`.
 
-```bash
-openclaw browser snapshot
-```
+### 2. Sub-agent Delegation
 
-Before opening a quiz attempt, ask the user these questions in plain language:
-
-1. Which quiz or assignment should I work on? Ask for the quiz URL, quiz id, title, or enough course/timeline detail to locate it.
-2. Which questions should I handle? Default to all visible questions in the current attempt.
-3. Should I auto-submit after filling verified answers? Default: no. If yes, require explicit confirmation again immediately before final submission.
-4. Should I retry/re-attempt until full score if the platform allows multiple attempts? Default: no. If yes, confirm that retries are allowed by the course rules and stop after any attempt limit, lockout, or non-full score that needs user judgment.
-
-Then spawn exactly one sub-agent to perform the quiz work. Do not continue the quiz workflow in main.
-
-## Sub-agent Delegation
-
-After login and user choices are collected, use one `sessions_spawn` worker:
+Collect quiz choices and spawn exactly one `sessions_spawn` worker:
 
 ```text
 sessions_spawn
@@ -55,166 +171,57 @@ sessions_spawn
     You are the Classviva quiz worker sub-agent. The main session must stay free; do all Classviva quiz work in this sub-agent.
 
     Context:
-    - The user has manually logged in to Classviva in the OpenClaw browser.
-    - Quiz target: <quiz URL/id/title from user>
-    - Question scope: <all visible questions or selected question numbers>
-    - Auto-submit: <yes/no>. Default no.
-    - Retry until full score: <yes/no>. Default no.
+    - User logged in manually.
+    - Target quiz: <URL/ID/title>
+    - Questions scope: <all or specific>
+    - Auto-submit: <yes/no>
+    - Retry until full score: <yes/no>
 
-    Required workflow:
-    1. Open the quiz or continue from the current Classviva tab.
-    2. Confirm this is the intended quiz before starting/continuing an attempt.
-    3. Load `scripts/classviva-extractor.js` from the OpenClaw workspace skill path.
-    4. Extract questions with `window.ClassvivaExtractor.extract()`.
-    5. Read `references/answer-format.md` before formatting math answers.
-    6. Follow each question's own answer-format instructions first; otherwise strictly follow `answer-format.md`.
-    7. Fill only answers that are confirmed in the worker context or confirmed by the user during the run.
-    8. Verify with `window.ClassvivaExtractor.verify()` after filling.
-    9. If auto-submit is enabled, summarize answers and request final confirmation immediately before clicking submit.
-    10. If retry-until-full-score is enabled, retry only within course rules and stop on attempt limits, lockouts, ambiguous feedback, or any warning.
-    11. Report final status, filled questions, verification result, submit/retry outcome, and any blockers back to the main session.
-
-    Safety:
-    - Do not ask for credentials.
-    - Do not bypass course rules.
-    - Do not hide progress in a background loop.
-    - Do not submit unless the user explicitly opted in for this quiz and confirmed the final submit step.
+    Workflow:
+    1. Open quiz attempt: openclaw browser open "<quiz_url>"
+    2. Inject extractor: scripts/classviva-extractor.js
+    3. Extract questions: window.ClassvivaExtractor.extract()
+    4. Format math answers per references/answer-format.md
+    5. Fill confirmed answers: window.ClassvivaExtractor.fill(answerMap)
+    6. Verify: window.ClassvivaExtractor.verify()
+    7. If auto-submit is enabled, require immediate confirmation before clicking submit.
+    8. Report final summary back to main session.
 ```
 
-The main agent should tell the user that a sub-agent has been started and then wait for/report the worker result.
+### 3. OpenClaw Browser Commands
 
-When the sub-agent opens the quiz, use:
+Inside the worker (or direct session):
 
-```bash
-openclaw browser open "https://classviva.hkust-gz.edu.cn/mod/quiz/view.php?id=<quiz_id>"
-openclaw browser snapshot
-```
+- **Inject extractor**:
+  ```bash
+  openclaw browser evaluate --fn "$(node -e 'const fs=require("fs"); const src=fs.readFileSync(process.argv[1],"utf8"); process.stdout.write(`() => { ${src}; return window.ClassvivaExtractor.version; }`)' "$EXTRACTOR_PATH")"
+  ```
+- **Extract**:
+  ```bash
+  openclaw browser evaluate --fn '() => window.ClassvivaExtractor.extract()'
+  ```
+- **Fill**:
+  ```bash
+  openclaw browser evaluate --fn '() => window.ClassvivaExtractor.fill({"question-1-1:answer:0":"sqrt(2)"})'
+  ```
+- **Verify**:
+  ```bash
+  openclaw browser evaluate --fn '() => window.ClassvivaExtractor.verify()'
+  ```
+- **Snapshot / Click**:
+  ```bash
+  openclaw browser snapshot
+  openclaw browser click <ref>
+  ```
 
-If the page shows a start/continue attempt button, click it with the ref from the snapshot only after the user confirms this is the intended quiz.
+---
 
-## Load The Extractor
+## Control Value Formats
 
-Use the active OpenClaw workspace copy when available:
+The `ClassvivaExtractor.fill(answerMap)` method accepts:
 
-```bash
-EXTRACTOR_PATH="$HOME/.openclaw/workspace/skills/classviva-automation-skill/scripts/classviva-extractor.js"
-```
+- **Text / Textarea / Select**: String value (e.g. `"sqrt(2)"`, `"optionA"`).
+- **Radio**: Option value, label text, selector, or zero-based option index (e.g. `"A"` or `0`).
+- **Checkbox**: Array of option values/labels/indexes (e.g. `["A", "B"]`), or boolean for single toggle (`true`/`false`).
 
-If working from the source checkout instead, use:
-
-```bash
-EXTRACTOR_PATH="/Users/lin/Desktop/classviva-automation-skill/scripts/classviva-extractor.js"
-```
-
-Inject the script into the current page:
-
-```bash
-openclaw browser evaluate --fn "$(node -e 'const fs=require("fs"); const src=fs.readFileSync(process.argv[1],"utf8"); process.stdout.write(`() => { ${src}; return window.ClassvivaExtractor.version; }`)' "$EXTRACTOR_PATH")"
-```
-
-## Extract Questions
-
-Run extraction after the attempt page is loaded:
-
-```bash
-openclaw browser evaluate --fn '() => window.ClassvivaExtractor.extract()'
-```
-
-Use `agentPrompt` for human-readable analysis and `questions[].controls[]` for structured filling. The extractor reads the DOM directly, so it is not limited by `openclaw browser snapshot` truncation.
-
-Expected payload shape:
-
-```json
-{
-  "questions": [
-    {
-      "id": "question-1-1",
-      "number": "1",
-      "text": "Question text with \\(...\\) and \\[...\\]",
-      "controls": [
-        {
-          "key": "question-1-1:answer:0",
-          "type": "text",
-          "selector": "[data-cvqa-key=\"question-1-1:answer:0\"]",
-          "label": "Answer"
-        }
-      ]
-    }
-  ],
-  "agentPrompt": "Markdown for explanation or answer checking"
-}
-```
-
-## Explain Or Check Answers
-
-When handing content to an agent:
-
-1. Provide the extracted `agentPrompt`.
-2. Read `references/answer-format.md` before judging answer syntax.
-3. Ask for explanation, intermediate reasoning, and syntax checking.
-4. Require the user to confirm any final answer before filling it into the quiz page.
-5. Follow the exact answer format required by the question first. If the question does not state a special format, strictly follow `references/answer-format.md`.
-
-## Fill User-Confirmed Answers
-
-Build an answer map from extracted control keys to user-confirmed values:
-
-```json
-{
-  "question-1-1:answer:0": "sqrt(2)",
-  "question-1-2:radio:q123:answer": "A"
-}
-```
-
-Fill without submitting:
-
-```bash
-openclaw browser evaluate --fn '() => window.ClassvivaExtractor.fill({"question-1-1:answer:0":"sqrt(2)"})'
-```
-
-Supported values:
-
-- Text, textarea, and select controls: string value.
-- Radio controls: option value, label text, selector, or zero-based option index.
-- Checkbox controls: array of option values/labels/selectors/indexes, or a boolean for a single checkbox.
-
-The filler sets values and dispatches `input` and `change` events so Moodle can record the update.
-
-## Verify Values
-
-After filling, verify the live page state:
-
-```bash
-openclaw browser evaluate --fn '() => window.ClassvivaExtractor.verify()'
-```
-
-Compare the reported values against the user-confirmed answer map. If values are missing, do not submit; re-extract and fill again using the current keys.
-
-## Optional Submit Or Retry
-
-Submission is a separate step and is never enabled by default.
-
-If the user explicitly opted into auto-submit for this quiz:
-
-1. Verify all filled values with `window.ClassvivaExtractor.verify()`.
-2. Summarize the answers that will be submitted.
-3. Ask for final confirmation immediately before clicking the submit control.
-4. Use `openclaw browser snapshot` to find the Moodle submit/finish controls and click only the relevant refs.
-5. Handle Moodle's second confirmation dialog/page only after the user has already confirmed auto-submit for this quiz.
-6. Take a screenshot or snapshot after submission and report the result.
-
-If the user explicitly opted into retry-until-full-score:
-
-1. Only proceed if the quiz allows multiple attempts and the user confirms retrying is permitted.
-2. After each submitted attempt, inspect the score/review page.
-3. If full score is achieved, stop and report.
-4. If not full score, report the score and any visible feedback, then ask before starting another attempt unless the user already gave explicit retry permission for this quiz.
-5. Stop immediately on attempt limits, lockouts, missing feedback, ambiguous scoring, or any course-policy warning.
-
-## Safety Rules
-
-- Do not ask for credentials; login is manual.
-- Do not submit or retry unless the user explicitly opted in for the current quiz and confirmed the final submission step.
-- Do not run a background loop that hides progress from the user.
-- Do not bypass course rules, attempt limits, lockouts, or warnings.
-- For math answers, obey the question's special instructions first; otherwise strictly follow `references/answer-format.md`.
+The filler dispatches native `input` and `change` events so Moodle saves the state reliably.
